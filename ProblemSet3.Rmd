@@ -1,0 +1,200 @@
+---
+title: "Problem Set 3"
+author: "Alexander Craig"
+date: "1/27/2022"
+output:
+  html_document: default
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,
+                      warning = FALSE)
+```
+
+**Cadet Name: Alexander Craig**
+
+**Instructions:** Type your answers to the questions below in the R Markdown file (.Rmd) provided. Knit the .Rmd file to a word or html document and submit a hard copy at the start of class on the lesson it is due.  If you will be missing class you can submit on Blackboard prior to the start of the lesson it is due (Note: if you are submitting on blackboard you must knit to word). This is an individual assignment; you must document any assistance in accordance with *Documentation of Academic Work*. Please submit a cover sheet and documentation with your knitted document.
+
+**Due:** Lesson 8
+
+### How many runs for a win?
+
+When we evaluate players and playing strategies, we usually want to assess their effect on winning.  However, doing so directly is difficult. It is much easier to assess their effect on runs and convert runs to wins.  A good rule of thumb is "ten runs per win".  A team can expect to gain an additional win for every ten runs they outscore their opponents by over the course of a season.  It's a handy rule of thumb...if you can argue a new player will produce 30 more runs than an existing player over the season, that's 3 wins!
+
+More formally, the "ten runs per win" rule of thumb is a statistic called Runs per Win (RPW).  Both our textbook (Chapter 4) and this [website](https://library.fangraphs.com/misc/war/converting-runs-to-wins/#:~:text=It%20is%20based%20on%20the,one%20win%20to%20their%20total.) have nice discussions of RPW. We calculate RPW from seasonal data and it typically fluctuates around 9 or 10 runs per win depending on the season.  There are several methods for calculating RPW...we will use linear regression here.
+
+1. Let's investigate the RPW for the 2019 season.  
+
+* Plot the Wpct ($y$-axis) vs the RD ($x$-axis) for each team in the 2019 season.  Add team labels to the plot using geom_text_repel.  In addition, add the best fit line using geom_smooth. Is a linear model appropriate for this data? Explain.
+
+```{r}
+library(Lahman)
+library(tidyverse)
+library(knitr)
+library(broom)
+library(ggrepel)
+
+runs2019 <- Teams %>% 
+  filter(yearID == "2019") %>% 
+  group_by(teamID) %>% 
+  summarize(W = sum(W),
+            L = sum(L),
+            R = sum(R),
+            RA = sum(RA)) %>% 
+  mutate(wPct = W / (W + L),
+         RD = R - RA)
+
+runs2019 %>% 
+  ggplot(aes(x = RD, y = wPct, label = teamID)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_text_repel() +
+  labs(x = "Run Differential", y = "Win Percentage", title = "Plotting Run Differential Against Win Percentage") +
+  theme_classic()
+```
+
+A linear model seems to be appropriate for this data because there is a high correlation between the run differential and the win percentage. There are very few teams that fall far from the line of best fit in the graph that has been created.
+
+* Fit the linear regression model on pg 95.  Report a summary of the regression results in a table and provide a brief interpretation of the two coefficients in the model.
+
+```{r}
+linFitRD <- lm(wPct ~ RD, data = runs2019)
+linFitRD
+```
+
+The regression results estimate that with a run differential of zero, a team would be expected to win half of its games. With each additional run differential, they are expected to, on average, increase their win percentage by 0.0006106. In other words, for each 10-run differential, a team is expected to win about one extra game.
+
+* Plot the residuals ($y$-axis) versus the fitted values ($x$-axis).  Identify the team with the largest positive and largest negative residuals.  Briefly explain why a team might have a large residual.
+
+```{r}
+rdAug <- augment(linFitRD, data = runs2019)
+
+residPlot <- rdAug %>% 
+  ggplot(aes(x = .fitted, y = .resid)) +
+  geom_point(alpha = 0.3) +
+  geom_text_repel(data = filter(rdAug, abs(.resid) > 0.04),
+                  aes(label = paste(teamID))) +
+  geom_hline(yintercept = 0, linetype = 3) +
+  xlab("Fitted Values") + ylab("Residual") +
+  theme_classic()
+
+residPlot
+
+rdAug %>% 
+  select(teamID, .resid) %>% 
+  arrange(-.resid) %>% 
+  head(1)
+
+rdAug %>% 
+  select(teamID, .resid) %>% 
+  arrange(.resid) %>% 
+  head(1)
+```
+
+Milwaukee had the greatest positive residual while the Chicago Cubs had the greatest negative residual. A team having a large residual (positive or negative) means that their actual win percentage was not close to their win percentage as predicted by the linear model that we created based on run differentials. This case might arise if a team wins or loses a lot of close games, keeping their run differential close to even while winning or losing more games than expected.
+
+* Calculate and interpret the root mean square error for this model.
+
+```{r}
+rdSummary <- rdAug %>% 
+  summarize(N = n(), avg = mean(.resid),
+            RMSE = sqrt(mean(.resid ^ 2)))
+rmse <- rdSummary %>% 
+  pull(RMSE)
+```
+
+If the errors are distributed normally, the RMSE can essentially be viewed as the standard deviation of that normal distribution. This means that about 67% of the residuals would be within +/- RMSE while about 95% of them would be between +/- 2*RMSE.
+
+* Extract the coefficient for RD ($\hat{\beta_1}$) and calculate RPW using the following equation:
+
+$$RPW = (\hat{\beta_1} * 162)^{-1}$$
+
+Note that there were 162 games in the 2019 season. 
+
+```{r}
+beta1 <- linFitRD$coef[2]
+
+rpw <- (beta1 * 162) ^ -1
+```
+
+
+
+2. Calculate RPW for each season from 1903 to the present. Note that not all seasons had 162 games like 2019.  Plot your results with RPW on the $y$-axis and year on the $x$-axis. 
+
+Suggested steps:
+
+* write a function to calculate the RD coefficient for one season 
+
+* map the function over Teams after splitting on season
+
+* determine the average number of games played by teams in each season and join these results with the previous step
+
+* calculate the RPW for each season $(RPW = RD \text{coefficient} * \text{average number of games})^{-1}$
+
+```{r}
+rpwCalc <- function(data, year) {
+  coef(lm(wPct ~ RD, data = data %>% 
+            filter(yearID == year) %>% 
+            mutate(RD = R - RA,
+                   wPct = W / (W + L)))) [2]
+}
+
+rpwCalc2 <- function(data,year) {
+  a = data %>%
+  filter(yearID == year) %>%
+  mutate(RD = R - RA,
+         wPct = W / (W+L))
+  df = data.frame(RD = coef(lm(wPct ~ RD, data = a)) [2], year, avgGames = mean(a$G))
+  df
+}
+
+rpwCalc2(Teams,2006)
+
+yearlyRPW <- 1903:2020 %>% 
+  map_df(function(x) rpwCalc2(Teams, x))
+
+yearlyRPW <- yearlyRPW %>% 
+  mutate(RPW = (RD * avgGames) ** -1)
+
+yearlyRPW %>% 
+  ggplot(aes(x = year, y = RPW)) +
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  labs(x = "Year", y = "Runs Per Win", title = "Plotting Runs Per Win by Year") +
+  theme_classic()
+
+### Grant, Ezra CDT E-4 '22. Assistance given to the author, email. CDT Grant showed me his problem set because I was stuck on how to write the function that would calculate RPW for each year. I had a function that was working but I could not figure out how to map it over each year and then plug that into the function that calculates the RPW based on the number of games played per season on average. I replicated his code, replacing the variable names with the variables that I had already created. West Point, NY. 26 Jan 2022. ###
+```
+
+3. Conventional wisdom is that runs are more valuable in lower scoring seasons.  Investigate whether RPW is lower in years with less scoring.  Provide your R code, any plots, and a paragraph summarizing your results.
+
+```{r}
+runsCalc <- function(data,year) {
+  a = data %>%
+  filter(yearID == year) %>%
+  mutate(RD = R - RA,
+         wPct = W / (W+L))
+  df = data.frame(RD = coef(lm(wPct ~ RD, data = a)) [2], year, avgGames = mean(a$G), totRuns = sum(a$R))
+  df
+}
+
+yearlyRuns <- 1903:2020 %>% 
+  map_df(function(x) runsCalc(Teams,x))
+
+yearlyRuns <- yearlyRuns %>% 
+  mutate(RPW = (RD * avgGames) ** -1)
+
+yearlyRuns %>% 
+  ggplot(aes(x = totRuns, y = RPW, label = year)) +
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  labs(x = "Total Runs", y = "Runs Per Win", title = "Plotting Total Yearly Runs vs. Runs Per Win") +
+  geom_text_repel() +
+  theme_classic()
+
+### This replicates the same function from part 2, but adds a calculation for the total number of runs. ###
+
+```
+This plot does not reveal any significant relationship between the total number of runs in a season and the number of runs needed to win an additional game. However, I think that this model may have worked better if I would have instead used the average number of runs scored per game. I plan on figuring out how to do that and creating another graph to see if there is a stronger correlation.
